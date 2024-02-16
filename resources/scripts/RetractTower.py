@@ -29,6 +29,7 @@
 #   Version 1.8  11/08/2022 Init on G92 E0
 #   Version 1.9  13/09/2022 Do not detect M83 in comment line
 #   Version 1.10 24/10/2022 Do not detect Extruder value in comment line : https://github.com/5axes/Calibration-Shapes/issues/120
+#   Version 1.11 16/02/2024 Case of G92 not equal to 0 : https://github.com/5axes/Calibration-Shapes/issues/147
 #------------------------------------------------------------------------------------------------------------------------------------
 
 from ..Script import Script
@@ -37,7 +38,7 @@ from UM.Application import Application
 import re #To perform the search
 from enum import Enum
 
-__version__ = '1.10'
+__version__ = '1.11'
 
 class Section(Enum):
     """Enum for section type."""
@@ -126,6 +127,17 @@ def is_reset_extruder_line(line: str) -> bool:
         bool: True contain a G92 E0 instruction
     """
     return "G92" in line and "E0" in line
+
+def is_set_extruder_line(line: str) -> bool:
+    """Check if current line contain a G92
+
+    Args:
+        line (str): Gcode line
+
+    Returns:
+        bool: True contain a G92 instruction
+    """
+    return "G92" in line and not "E0" in line
     
 class RetractTower(Script):
     def __init__(self):
@@ -227,6 +239,7 @@ class RetractTower(Script):
 
         idl=0
         current_e = 0
+        addition_e = 0
         first_code = False
         
         for layer in data:
@@ -245,7 +258,17 @@ class RetractTower(Script):
                 # Check if the line start with the Comment Char                
                 if is_not_relative_instruction_line(line) and line[0] != ";" :
                     relative_extrusion = False
-                    
+                
+                # Manage https://github.com/5axes/Calibration-Shapes/issues/147
+                if is_set_extruder_line(line) and line[0] != ";" :
+                    # Logger.log('d', 'Set_extruder current_e :' + str(current_e))
+                    # Logger.log('d', 'Set_extruder save_e    :' + str(save_e))
+                    searchE = re.search(r"E([-+]?\d*\.?\d*)", line)
+                    if searchE:
+                        current_e=float(searchE.group(1))
+                        save_e = current_e
+                        addition_e = current_e
+
                 if is_reset_extruder_line(line) and line[0] != ";" :
                     # Logger.log('d', 'Reset_extruder :' + str(current_e))
                     current_e = 0
@@ -292,7 +315,12 @@ class RetractTower(Script):
                                         lines[line_index] = "G1 F{:d} E{:.5f}".format(int(CurrentValue), current_e)
                                         lcd_gcode = "M117 speed F{:d}".format(int(CurrentValue))
                                     if  (Instruction=='distance'):
-                                        current_e = save_e - CurrentValue
+                                        # Most of the case addition_e =0  except case https://github.com/5axes/Calibration-Shapes/issues/147
+                                        if (addition_e>0) :
+                                            current_e = current_e - CurrentValue
+                                            addition_e = 0
+                                        else :
+                                            current_e = save_e - CurrentValue + addition_e
                                         lines[line_index] = "G1 F{:d} E{:.5f} ; Modi".format(int(current_f), current_e)
                                         lcd_gcode = "M117 retract E{:.3}".format(float(CurrentValue))
                                 else:
